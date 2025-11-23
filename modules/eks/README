@@ -1,0 +1,13 @@
+Steps to use this Terraform project and create a Kubernetes cluster in AWS EKS.
+Prerequisites:
+    * Terraform installed in your machine
+    * Set AWS permissions
+1. Run "terraform init" to install all dependencies and modules.
+2. Update and verify the values provided in terrafrom.tfvars file. Especially:
+    * tag "Owner".
+    * "region" - where to deploy the cluster.
+    * "node_type" - instance type for the worker nodes.
+3. Provision the infra - Run the command "terraform apply", "yes".
+4. Connect your kubectl CLI to your EKS cluster.
+    * When the "terraform apply" is completed, an output of "cluster_connect" will be printed. This is a command which you should execute to configure kubectl to work with the new cluster.
+Note: You can always list all outputs by running the command "terraform output".
