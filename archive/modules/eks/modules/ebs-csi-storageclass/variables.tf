@@ -1,9 +1,9 @@
 variable "host" {
-  type = string
+   type = string
 }
 variable "cluster_ca_certificate" {
-  type = string
+   type = string
 }
 variable "token" {
-  type = string
+   type = string
 }  

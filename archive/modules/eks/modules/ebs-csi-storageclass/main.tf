@@ -30,7 +30,7 @@ resource "kubernetes_storage_class_v1" "gp3" {
 
   parameters = {
     # encrypted = true
-    "csi.storage.k8s.io/fstype" = "ext4"
-    type                        = "gp3"
+    "csi.storage.k8s.io/fstype"   = "ext4"
+    type      = "gp3"
   }
 }

@@ -5,7 +5,7 @@ terraform {
       version = "~> 5.0"
     }
   }
-
+  
   # backend "s3" {
   #   bucket         = "dakar-terraform" # REPLACE WITH YOUR BUCKET NAME
   #   key            = "terraform_modules/terraform.tfstate"

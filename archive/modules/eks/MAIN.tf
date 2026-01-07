@@ -3,10 +3,10 @@ locals {
 }
 
 module "network" {
-  source      = "./modules/network"
-  name_prefix = local.name_prefix
-  vpc_cidrs   = var.vpc_cidrs
-  ha          = var.ha
+  source             = "./modules/network"
+  name_prefix        = local.name_prefix
+  vpc_cidrs          = var.vpc_cidrs
+  ha                 = var.ha
 }
 
 module "eks" {
@@ -14,17 +14,17 @@ module "eks" {
   version         = "~> 20.31"
   cluster_name    = "${var.common_tags.owner}-cluster"
   cluster_version = var.cluster_version
-  subnet_ids      = module.network.subnet_ids
+  subnet_ids     = module.network.subnet_ids
   vpc_id          = module.network.vpc_id
-
-  cluster_endpoint_public_access           = true
-  enable_cluster_creator_admin_permissions = true
+  
+  cluster_endpoint_public_access  = true
+  enable_cluster_creator_admin_permissions = true 
 
   eks_managed_node_groups = {
     main = {
       name         = "${var.common_tags.owner}-eks-node"
-      desired_size = 2
-      max_size     = 2
+      desired_size = 1
+      max_size     = 1
       min_size     = 1
 
       instance_types = [var.node_type]
@@ -33,7 +33,7 @@ module "eks" {
 }
 
 module "eks_blueprints_addons" {
-  source  = "aws-ia/eks-blueprints-addons/aws"
+  source = "aws-ia/eks-blueprints-addons/aws"
   version = "~> 1.0"
 
   cluster_name      = module.eks.cluster_name
@@ -43,7 +43,7 @@ module "eks_blueprints_addons" {
 
   eks_addons = {
     aws-ebs-csi-driver = {
-      most_recent              = true
+      most_recent = true
       service_account_role_arn = module.ebs_csi_irsa_role.iam_role_arn
     }
     coredns = {
@@ -56,25 +56,12 @@ module "eks_blueprints_addons" {
       most_recent = true
     }
   }
-
-  # External Secrets Operator for AWS Secrets Manager integration
-  enable_external_secrets = true
-  external_secrets = {
-    service_account_name = "external-secrets-sa"
-  }
-  external_secrets_secrets_manager_arns = [
-    "arn:aws:secretsmanager:${var.region}:*:secret:staging/backend/*"
-  ]
-  external_secrets_kms_key_arns = [
-    "arn:aws:kms:${var.region}:*:key/*"
-  ]
-
-  #   enable_metrics_server                  = true
+#   enable_metrics_server                  = true
 }
 
 module "ebs_csi_irsa_role" {
-  source                = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version               = "5.30.0"
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "5.30.0"
   role_name             = "${local.name_prefix}-ebs-csi"
   attach_ebs_csi_policy = true
 

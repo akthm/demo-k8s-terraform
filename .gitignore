@@ -17,6 +17,8 @@
 *.swo
 *~
 .DS_Store
+.env*
+.terragrunt-cache*
 
 # Environment-specific variables (may contain secrets)
 *.tfvars

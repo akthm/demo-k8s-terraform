@@ -12,6 +12,11 @@
  * ==============================================================================
  */
 
+locals {
+  owner    = var.owner
+  app_name = var.app_name
+}
+
 # ===============================================================================
 # Kubernetes Namespaces
 # ===============================================================================
@@ -41,35 +46,68 @@ resource "kubernetes_namespace" "argocd" {
 # Exposes services via AWS Network Load Balancer
 # Provides path-based routing for ArgoCD and other services
 
+locals {
+  is_kind = var.platform == "kind"
+}
+
 resource "helm_release" "nginx_ingress_controller" {
   name       = "nginx-ingress-controller"
   repository = "https://kubernetes.github.io/ingress-nginx"
   chart      = "ingress-nginx"
   namespace  = kubernetes_namespace.nginx_ingress.metadata[0].name
   version    = "4.10.0"
+  
+  # Increase timeout for Kind clusters
+  timeout = 300  # 5 minutes
+  wait    = true
 
-  values = [
-    yamlencode({
-      controller = {
-        service = {
-          type = "LoadBalancer"
-          annotations = {
-            "service.beta.kubernetes.io/aws-load-balancer-type" = "nlb"
-          }
-        }
-        resources = {
-          limits = {
-            cpu    = "200m"
-            memory = "512Mi"
-          }
-          requests = {
-            cpu    = "100m"
-            memory = "256Mi"
-          }
+  values = [local.is_kind ? yamlencode({
+    controller = {
+      service = {
+        type = "NodePort"
+      }
+      hostPort = {
+        enabled = true
+        ports = {
+          http  = 80
+          https = 443
         }
       }
-    })
-  ]
+      nodeSelector = {
+        ingress-ready = "true"  # Changed from quoted key
+      }
+      # Important on kind to allow scheduling on control-plane nodes
+      tolerations = [
+        {
+          key      = "node-role.kubernetes.io/control-plane"
+          operator = "Equal"
+          effect   = "NoSchedule"
+        },
+        {
+          key      = "node-role.kubernetes.io/master"
+          operator = "Equal"
+          effect   = "NoSchedule"
+        }
+      ]
+      resources = {
+        limits   = { cpu = "200m", memory = "512Mi" }
+        requests = { cpu = "100m", memory = "256Mi" }
+      }
+    }
+  }) : yamlencode({
+    controller = {
+      service = {
+        type = "LoadBalancer"
+        annotations = {
+          "service.beta.kubernetes.io/aws-load-balancer-type" = "nlb"
+        }
+      }
+      resources = {
+        limits   = { cpu = "200m", memory = "512Mi" }
+        requests = { cpu = "100m", memory = "256Mi" }
+      }
+    }
+  })]
 
   depends_on = [kubernetes_namespace.nginx_ingress]
 }
@@ -86,6 +124,18 @@ resource "helm_release" "argocd" {
   chart      = "argo-cd"
   namespace  = kubernetes_namespace.argocd.metadata[0].name
   version    = var.argocd_version
+  
+  # Increase timeout for slow Kind clusters
+  timeout       = 600  # 10 minutes
+  wait          = true
+  wait_for_jobs = true
+  
+  # Allow deployment to succeed even if some pods are slow to start
+  atomic            = false
+  cleanup_on_fail   = false
+  replace           = false
+  force_update      = false
+  recreate_pods     = false
 
   values = [
     yamlencode({
@@ -98,11 +148,11 @@ resource "helm_release" "argocd" {
           "--rootpath=/argo",
           "--insecure"  # Disable TLS/HTTPS redirect
         ]
-        replicas = 2
+        replicas = local.is_kind ? 1 : 2  # Single replica for Kind
         resources = {
           limits = {
-            cpu    = "500m"
-            memory = "512Mi"
+            cpu    = local.is_kind ? "200m" : "500m"
+            memory = local.is_kind ? "256Mi" : "512Mi"
           }
           requests = {
             cpu    = "100m"
@@ -112,11 +162,11 @@ resource "helm_release" "argocd" {
       }
 
       applicationController = {
-        replicas = 2
+        replicas = local.is_kind ? 1 : 2  # Single replica for Kind
         resources = {
           limits = {
-            cpu    = "1000m"
-            memory = "1Gi"
+            cpu    = local.is_kind ? "500m" : "1000m"
+            memory = local.is_kind ? "512Mi" : "1Gi"
           }
           requests = {
             cpu    = "250m"
@@ -126,11 +176,11 @@ resource "helm_release" "argocd" {
       }
 
       repoServer = {
-        replicas = 2
+        replicas = local.is_kind ? 1 : 2  # Single replica for Kind
         resources = {
           limits = {
-            cpu    = "500m"
-            memory = "512Mi"
+            cpu    = local.is_kind ? "200m" : "500m"
+            memory = local.is_kind ? "256Mi" : "512Mi"
           }
           requests = {
             cpu    = "100m"
@@ -163,11 +213,20 @@ resource "helm_release" "argocd" {
 }
 
 # Wait for ArgoCD CRDs to be registered in the API server
-resource "time_sleep" "wait_for_argocd_crds" {
+resource "null_resource" "wait_for_argocd_crds" {
   depends_on = [helm_release.argocd]
 
-  create_duration = "60s"
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      echo "Waiting for Argo CD CRDs..."
+      kubectl wait --for=condition=Established crd/applications.argoproj.io --timeout=120s
+      kubectl wait --for=condition=Established crd/appprojects.argoproj.io --timeout=120s
+      echo "Argo CD CRDs are ready"
+    EOT
+  }
 }
+
 
 # ===============================================================================
 # ArgoCD Path-Based Ingress
@@ -266,37 +325,37 @@ resource "null_resource" "argocd_root_app" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      cat <<EOF | kubectl apply -f -
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata:
-        name: root-app
-        namespace: argocd
-        finalizers:
-        - resources-finalizer.argocd.argoproj.io
-      spec:
-        project: default
-        source:
-          repoURL: ${var.argocd_repo_url}
-          targetRevision: ${var.argocd_target_revision}
-          path: ${var.argocd_repo_path}
-        destination:
-          server: https://kubernetes.default.svc
-          namespace: default
-        syncPolicy:
-          automated:
-            prune: true
-            selfHeal: true
-          syncOptions:
-          - CreateNamespace=true
-          - PrunePropagationPolicy=background
-          retry:
-            limit: 5
-            backoff:
-              duration: 5s
-              factor: 2
-              maxDuration: 3m
-      EOF
+      kubectl apply -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-app
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${var.argocd_repo_url}
+    targetRevision: ${var.argocd_target_revision}
+    path: ${var.argocd_repo_path}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=background
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+EOF
     EOT
   }
 
@@ -308,6 +367,6 @@ resource "null_resource" "argocd_root_app" {
   depends_on = [
     helm_release.argocd,
     kubernetes_secret.argocd_repo_credentials,
-    time_sleep.wait_for_argocd_crds
+    null_resource.wait_for_argocd_crds
   ]
 }

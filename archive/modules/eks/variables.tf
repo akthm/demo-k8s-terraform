@@ -10,21 +10,21 @@ variable "vpc_cidrs" {
 
 variable "common_tags" {
   default = {
-    owner     = "terraform-eks"
-    managedBy = "terraform"
-    usage     = "training"
-    app_name  = "demo-crm"
+    owner           = "terraform-eks"
+    managedBy       = "terraform"
+    usage           = "training"
+    app_name        = "demo-crm"
   }
 }
 
 variable "region" {
-  type = string
+  type        = string
 }
 
 variable "cluster_version" {
-  type = string
+    type      = string
 }
 
 variable "node_type" {
-  type = string
+  type        = string
 }

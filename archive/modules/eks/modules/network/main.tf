@@ -23,7 +23,7 @@ resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
   tags = {
     Name = "${var.name_prefix}-IGW"
-  }
+  }  
 }
 
 resource "aws_route_table" "internet" {
@@ -35,11 +35,11 @@ resource "aws_route_table" "internet" {
   }
   tags = {
     Name = "${var.name_prefix}-RTB"
-  }
+  }  
 }
 
 resource "aws_subnet" "this" {
-  count = local.total
+  count                   = local.total
 
   vpc_id                  = aws_vpc.this.id
   map_public_ip_on_launch = true
@@ -47,7 +47,7 @@ resource "aws_subnet" "this" {
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   tags = {
     Name = "${var.name_prefix}-SUBNET-${count.index}"
-  }
+  }  
 }
 
 resource "aws_route_table_association" "this" {

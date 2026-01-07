@@ -2,6 +2,36 @@
 # Cluster Services Module - Input Variables (Simplified)
 # ==============================================================================
 
+variable "environment" {
+  type = string
+}
+
+variable "owner" {
+  type        = string
+  description = "Owner used for labels/naming (NOT a secret)."
+}
+
+variable "app_name" {
+  type        = string
+  description = "App name used for labels/naming (NOT a secret)."
+}
+
+variable "common_tags" {
+  type        = map(string)
+  description = "AWS tags (standard keys: owner/app_name/environment/managed_by)."
+  default     = {}
+}
+
+# ===============================================================================
+# LOCAL VS CLOUD PLATFORM SWITCH
+# ===============================================================================
+
+variable "platform" {
+  type    = string
+  default = "eks" # "eks" | "kind"
+}
+
+
 # ===============================================================================
 # EKS Cluster Information
 # ===============================================================================

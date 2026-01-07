@@ -15,10 +15,10 @@
 variable "common_tags" {
   description = "Common tags to apply to all resources"
   type = object({
-    owner     = string
-    managedBy = string
-    usage     = string
-    app_name  = string
+    owner      = string
+    managedBy  = string
+    usage      = string
+    app_name   = string
   })
 
   validation {
@@ -93,64 +93,23 @@ variable "node_type" {
 # ArgoCD Configuration
 # ===============================================================================
 
-variable "argocd_repo_url" {
+variable "argocd_app_of_apps_repo_url" {
   description = "Git repository URL for ArgoCD 'App of Apps' pattern"
   type        = string
 
   validation {
-    condition     = can(regex("^https://", var.argocd_repo_url))
+    condition     = can(regex("^https://", var.argocd_app_of_apps_repo_url))
     error_message = "Repository URL must start with https:// for secure access."
   }
 }
 
-variable "argocd_repo_path" {
+variable "argocd_app_of_apps_repo_path" {
   description = "Path within the Git repository for ArgoCD applications"
   type        = string
   default     = "apps"
 
   validation {
-    condition     = !startswith(var.argocd_repo_path, "/")
+    condition     = !startswith(var.argocd_app_of_apps_repo_path, "/")
     error_message = "Path must not start with a forward slash."
-  }
-}
-
-# ===============================================================================
-# Git Authentication & Credentials
-# ===============================================================================
-
-variable "git_token" {
-  description = "GitHub/GitLab personal access token for repository access. Required for ArgoCD to pull from private repos."
-  type        = string
-  sensitive   = true
-
-  validation {
-    condition     = length(var.git_token) > 0
-    error_message = "Git token cannot be empty. Provide a valid GitHub/GitLab PAT."
-  }
-}
-
-variable "argocd_target_revision" {
-  description = "Target git branch or tag for ArgoCD to sync from"
-  type        = string
-  default     = "main"
-
-  validation {
-    condition     = !contains(["/"], var.argocd_target_revision)
-    error_message = "Target revision should be a branch or tag name, not a path."
-  }
-}
-
-# ===============================================================================
-# ArgoCD Server Configuration
-# ===============================================================================
-
-variable "argocd_version" {
-  description = "Helm chart version for ArgoCD"
-  type        = string
-  default     = "6.0.0"
-
-  validation {
-    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.argocd_version))
-    error_message = "ArgoCD version must be in semantic version format (X.Y.Z)."
   }
 }
