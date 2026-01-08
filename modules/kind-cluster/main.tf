@@ -69,13 +69,3 @@ exit 1
     EOT
   }
 }
-
-
-
-output "kube_context" {
-  value = "kind-${var.cluster_name}"
-}
-
-output "cluster_name" {
-  value = var.cluster_name
-}
