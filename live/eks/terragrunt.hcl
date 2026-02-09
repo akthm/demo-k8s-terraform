@@ -30,7 +30,7 @@ inputs = {
 
   argocd_version         = "7.6.12"
   argocd_repo_url        = get_env("TG_VAR_argocd_repo_url", "")
-  argocd_repo_path       = get_env("TG_VAR_argocd_repo_path", "gitops/root")
+  argocd_repo_path       = get_env("TG_VAR_argocd_repo_path", "apps/staging")
   argocd_target_revision = get_env("TG_VAR_argocd_target_revision", "main")
   
   # TODO(PAT/GitOps): do NOT pass PATs via Terraform/Terragrunt inputs.

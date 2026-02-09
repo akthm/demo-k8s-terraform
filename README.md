@@ -1,591 +1,232 @@
-# AWS EKS Infrastructure with ArgoCD GitOps
+# OCI OKE Infrastructure with GitOps
 
-## 📋 Project Overview
+Production-ready Oracle Cloud Infrastructure (OCI) Kubernetes Engine (OKE) cluster deployed via Terraform/Terragrunt with GitOps capabilities.
 
-Production-ready AWS EKS cluster infrastructure deployed via Terraform with GitOps capabilities. This project provisions a complete Kubernetes environment with minimal essential services, designed for bootstrapping and automated application deployment through ArgoCD.
+## 📋 Overview
 
-**Core Infrastructure:**
-- **VPC & Networking** - Multi-AZ high-availability networking with public/private subnets
-- **EKS Cluster** - Managed Kubernetes with worker nodes and essential addons
-- **NGINX Ingress Controller** - HTTP LoadBalancer for routing traffic to services
-- **ArgoCD** - GitOps continuous deployment engine with App-of-Apps pattern
-- **External Secrets Operator** - AWS Secrets Manager integration for secure secrets management
+This infrastructure provides a complete Kubernetes platform on OCI with enterprise-grade security, secrets management, and database services.
 
-**Architecture Philosophy:**
-- Terraform provisions minimal bootstrap infrastructure
-- ArgoCD manages all application workloads from Git
-- Infrastructure as Code (IaC) for reproducibility
-- GitOps for continuous deployment and declarative configuration
-
----
-
-## 🚀 Quick Start Guide
-
-### Prerequisites
-
-1. **AWS CLI configured** with credentials:
-   ```bash
-   aws configure
-   # Provide: Access Key ID, Secret Access Key, Region (ap-south-1), Output format (json)
-   ```
-
-2. **Tools installed:**
-   ```bash
-   terraform version  # >= 1.5.0
-   kubectl version --client
-   aws --version
-   ```
-
-3. **GitHub Personal Access Token**:
-   ```bash
-   # Create token at GitHub Settings → Developer settings → Personal access tokens
-   # Required scope: repo (for private repositories)
-   export TF_VAR_git_token="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-   ```
-
----
-
-### Provisioning Steps
-
-#### Step 1: Initialize Terraform
-```bash
-cd /home/akthm/Devops/portfolio/terraform
-terraform init
-```
-
-#### Step 2: Deploy EKS Cluster Only (Phase 1)
-```bash
-# Deploy VPC, networking, and EKS cluster
-terraform apply -target=module.eks -var-file="terraform.tfvars" -auto-approve
-
-# This takes ~15-20 minutes and creates:
-# - VPC with public/private subnets
-# - Internet Gateway, NAT Gateways
-# - EKS cluster with worker nodes
-# - EBS CSI driver, External Secrets Operator
-```
-
-**Why Phase 1?** The Kubernetes and Helm providers need the EKS cluster endpoint before they can initialize, avoiding circular dependencies.
-
-#### Step 3: Configure kubectl
-```bash
-# Get the command from Terraform output
-terraform output kubeconfig_command
-
-# Example output: aws eks update-kubeconfig --region ap-south-1 --name akthm-cluster
-# Run the command:
-aws eks update-kubeconfig --region ap-south-1 --name akthm-cluster
-
-# Verify cluster access
-kubectl get nodes
-# Expected: 2 nodes in Ready state
-```
-
-#### Step 4: Deploy Cluster Services (Phase 2)
-```bash
-# Deploy NGINX Ingress and ArgoCD
-terraform apply -var-file="terraform.tfvars" -auto-approve
-
-# This takes ~5-10 minutes and creates:
-# - NGINX Ingress Controller (AWS Network LoadBalancer)
-# - ArgoCD server (HA with 2 replicas)
-# - ArgoCD ingress (path-based routing at /argo)
-```
-
-#### Step 5: Get LoadBalancer DNS
-```bash
-# Option A: From Terraform output
-terraform output nginx_loadbalancer_info
-
-# Option B: Direct kubectl command
-kubectl -n ingress-nginx get svc ingress-nginx-controller
-
-# Look for EXTERNAL-IP column (e.g., a1b2c3d4-12345.ap-south-1.elb.amazonaws.com)
-# Takes 2-5 minutes to provision
-```
-
-#### Step 6: Get ArgoCD Admin Credentials
-```bash
-# Get password
-kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' | base64 -d && echo
-
-# Access ArgoCD UI
-# URL: http://<LOADBALANCER-DNS>/argo
-# Username: admin
-# Password: <from command above>
-```
-
-**Example Access:**
-```
-URL: http://a1b2c3d4-12345.ap-south-1.elb.amazonaws.com/argo
-Username: admin
-Password: xJ9kL2pQ8mN5v
-```
-
----
+| Component | Description | OCI Service |
+|-----------|-------------|-------------|
+| **Networking** | VCN with public/private subnets, gateways | VCN, NAT Gateway, Service Gateway |
+| **Kubernetes** | Managed Kubernetes control plane | OKE (Oracle Kubernetes Engine) |
+| **Compute** | Worker node pool with autoscaling | Compute (E3/E4.Flex shapes) |
+| **Database** | Autonomous Transaction Processing | ATP with Data Guard |
+| **Secrets** | Centralized secrets management | OCI Vault + ESO |
+| **Access** | Secure private endpoint access | Bastion Service |
+| **Ingress** | Load balancing and traffic routing | Network Load Balancer |
+| **GitOps** | Continuous deployment from Git | ArgoCD (self-managed) |
 
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│               AWS Cloud (ap-south-1)                 │
-│                                                      │
-│  ┌────────────────────────────────────────────────┐ │
-│  │  VPC (10.0.0.0/16)                             │ │
-│  │                                                │ │
-│  │  ┌──────────────┐      ┌──────────────┐       │ │
-│  │  │ AZ-1         │      │ AZ-2         │       │ │
-│  │  │ Public: /24  │      │ Public: /24  │       │ │
-│  │  │ Private: /24 │      │ Private: /24 │       │ │
-│  │  └──────────────┘      └──────────────┘       │ │
-│  │         │                      │               │ │
-│  │         └──────────┬───────────┘               │ │
-│  │                    │                           │ │
-│  │  ┌─────────────────▼────────────────────────┐  │ │
-│  │  │  EKS Cluster (Kubernetes 1.34)          │  │ │
-│  │  │                                         │  │ │
-│  │  │  ┌───────────────────────────────────┐  │  │ │
-│  │  │  │  NGINX Ingress (Network LB)       │  │  │ │
-│  │  │  │  └─► /argo → ArgoCD Server        │  │  │ │
-│  │  │  └───────────────────────────────────┘  │  │ │
-│  │  │                                         │  │ │
-│  │  │  ┌───────────────────────────────────┐  │  │ │
-│  │  │  │  ArgoCD (GitOps Engine)           │  │  │ │
-│  │  │  │  - Syncs from Git Repository      │  │  │ │
-│  │  │  │  - App-of-Apps pattern            │  │  │ │
-│  │  │  │  - Manages all workloads          │  │  │ │
-│  │  │  └───────────────────────────────────┘  │  │ │
-│  │  │                                         │  │ │
-│  │  │  ┌───────────────────────────────────┐  │  │ │
-│  │  │  │  External Secrets Operator        │  │  │ │
-│  │  │  │  - AWS Secrets Manager sync       │  │  │ │
-│  │  │  │  - IRSA authentication            │  │  │ │
-│  │  │  └───────────────────────────────────┘  │  │ │
-│  │  │                                         │  │ │
-│  │  │  ┌───────────────────────────────────┐  │  │ │
-│  │  │  │  Your Applications                │  │  │ │
-│  │  │  │  (Managed by ArgoCD from Git)     │  │  │ │
-│  │  │  └───────────────────────────────────┘  │  │ │
-│  │  └─────────────────────────────────────────┘  │ │
-│  └────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                        OCI Region (il-jerusalem-1)                          │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  VCN (10.0.0.0/16)                                                   │   │
+│  │                                                                      │   │
+│  │  ┌──────────────────────┐    ┌──────────────────────┐              │   │
+│  │  │  Public Subnet       │    │  Private Subnet       │              │   │
+│  │  │  10.0.10.0/24       │    │  10.0.20.0/24        │              │   │
+│  │  │                      │    │                       │              │   │
+│  │  │  ┌────────────────┐ │    │  ┌─────────────────┐ │              │   │
+│  │  │  │ Network LB     │ │    │  │ OKE Worker Nodes│ │              │   │
+│  │  │  │ (443, 80)      │─┼────┼─►│ (2+ nodes)      │ │              │   │
+│  │  │  └────────────────┘ │    │  └────────┬────────┘ │              │   │
+│  │  │                      │    │           │          │              │   │
+│  │  │  ┌────────────────┐ │    │  ┌────────▼────────┐ │              │   │
+│  │  │  │ Edge Proxy VM  │ │    │  │ ATP Private     │ │              │   │
+│  │  │  │ (NGINX)        │ │    │  │ Endpoint        │ │              │   │
+│  │  │  └────────────────┘ │    │  │ (1521/TLS)      │ │              │   │
+│  │  │                      │    │  └─────────────────┘ │              │   │
+│  │  │  ┌────────────────┐ │    │                       │              │   │
+│  │  │  │ Bastion Service│ │    │                       │              │   │
+│  │  │  │ (SSH Tunnel)   │─┼────┼──► K8s API (6443)    │              │   │
+│  │  │  └────────────────┘ │    │                       │              │   │
+│  │  └──────────────────────┘    └──────────────────────┘              │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌──────────────────┐   │
+│  │ OCI Vault           │  │ ATP Database        │  │ Object Storage   │   │
+│  │ - Master Key (AES)  │  │ - Autonomous DB     │  │ - Wallet Bucket  │   │
+│  │ - App Secrets (JSON)│  │ - Data Guard (Paid) │  │ - Backups        │   │
+│  │ - Instance Principal│  │ - Auto Backup       │  │                  │   │
+│  └─────────────────────┘  └─────────────────────┘  └──────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
-
----
-
-## 📊 Build Explanation
-
-### Data Flow
-
-```
-1. terraform.tfvars (user inputs)
-        ↓
-2. variables.tf (validation & type checking)
-        ↓
-3. providers.tf (AWS provider initialization)
-        ↓
-4. main.tf (orchestration layer)
-        ├─► module.eks
-        │    ├─► network/ (VPC, subnets, routing)
-        │    ├─► EKS cluster (control plane + worker nodes)
-        │    ├─► EKS addons (CoreDNS, VPC-CNI, EBS CSI)
-        │    ├─► External Secrets Operator (via Blueprints)
-        │    └─► OIDC provider (for IRSA)
-        │
-        └─► module.cluster_services
-             ├─► Kubernetes provider (uses EKS endpoint)
-             ├─► Helm provider (uses EKS endpoint)
-             ├─► NGINX Ingress Controller (Helm release)
-             ├─► ArgoCD (Helm release with HA)
-             ├─► ArgoCD ingress (Kubernetes manifest)
-             └─► ArgoCD App-of-Apps (bootstraps Git sync)
-```
-
----
-
-### Module: `eks/`
-
-**Purpose:** Provisions EKS cluster and foundational infrastructure.
-
-**Components:**
-
-1. **Network Module** (`modules/eks/modules/network/`)
-   - VPC with configurable CIDR
-   - Public subnets (one per AZ, tagged for LoadBalancers)
-   - Private subnets (one per AZ, tagged for internal services)
-   - Internet Gateway for public subnet egress
-   - NAT Gateways (one per AZ) for private subnet egress
-   - Route tables and associations
-
-2. **EKS Cluster** (AWS EKS module)
-   - Managed Kubernetes control plane
-   - Worker node groups (t3a.large by default, scalable)
-   - Cluster security groups
-   - OIDC provider for IRSA (IAM Roles for Service Accounts)
-
-3. **EKS Addons** (via EKS Blueprints Addons)
-   - **CoreDNS** - Cluster DNS
-   - **VPC-CNI** - AWS VPC networking for pods
-   - **kube-proxy** - Network proxy on nodes
-   - **EBS CSI Driver** - Persistent volume provisioning
-   - **External Secrets Operator** - AWS Secrets Manager integration
-
-4. **EBS CSI StorageClass** (`modules/eks/modules/ebs-csi-storageclass/`)
-   - Default storage class using EBS gp3 volumes
-   - Encrypted at rest
-   - WaitForFirstConsumer binding mode (topology-aware)
-
-**Key Outputs:**
-- Cluster name, endpoint, certificate authority
-- OIDC provider ARN and issuer URL
-- Security group IDs
-- kubeconfig command
-
----
-
-### Module: `cluster_services/`
-
-**Purpose:** Bootstrap essential services for GitOps and traffic routing.
-
-**Components:**
-
-1. **NGINX Ingress Controller** (Helm release)
-   - Chart: `ingress-nginx/ingress-nginx` v4.10.0
-   - Service type: LoadBalancer (creates AWS Network Load Balancer)
-   - Namespace: `ingress-nginx`
-   - Purpose: Routes HTTP traffic to services via path-based rules
-
-2. **ArgoCD** (Helm release)
-   - Chart: `argo/argo-cd` v6.0.0
-   - High Availability: 2 replicas for server and repo-server
-   - Namespace: `argocd`
-   - Git repository credentials injected via Kubernetes secret
-   - Ingress configured for path `/argo`
-
-3. **ArgoCD Ingress** (Kubernetes manifest)
-   - Routes `http://<LoadBalancer>/argo` → ArgoCD server
-   - No TLS/HTTPS (simplified for development)
-   - Path rewrite: strips `/argo` prefix before forwarding
-
-4. **ArgoCD App-of-Apps** (Kubernetes Application manifest)
-   - Bootstraps GitOps by pointing ArgoCD at your Git repository
-   - Auto-syncs applications from configured path
-   - Enables declarative application management
-
-**Key Outputs:**
-- ArgoCD namespace and access URL
-- NGINX LoadBalancer info command
-- Admin password retrieval command
-
----
-
-### Root Module (`main.tf`)
-
-**Purpose:** Orchestrates all modules and manages dependencies.
-
-**Key Responsibilities:**
-1. Data source for EKS cluster authentication token
-2. Invokes `module.eks` with required variables
-3. Configures Kubernetes and Helm providers (using EKS outputs)
-4. Adds 30-second wait after cluster creation (ensures readiness)
-5. Invokes `module.cluster_services` with cluster details
-6. Exposes consolidated outputs for end-user access
-
-**Dependency Chain:**
-```
-module.eks
-   ↓
-time_sleep.wait_for_cluster
-   ↓
-module.cluster_services
-```
-
----
-
-### External Secrets Operator Integration
-
-**Purpose:** Sync secrets from AWS Secrets Manager to Kubernetes secrets.
-
-**Architecture:**
-
-```
-AWS Secrets Manager (ap-south-1)
-  ├── staging/backend/database     (MySQL credentials)
-  ├── staging/backend/flask-app    (Flask SECRET_KEY, API keys)
-  ├── staging/backend/admin        (Admin user credentials)
-  └── staging/backend/jwt-keys     (RSA keys for JWT signing)
-         ↓
-ClusterSecretStore (IRSA authentication)
-         ↓
-ExternalSecret resources (define mappings)
-         ↓
-Kubernetes Secrets (auto-created and synced)
-         ↓
-Application Pods (mount secrets as env vars or volumes)
-```
-
-**Components:**
-
-1. **External Secrets Operator** (deployed via EKS Blueprints Addons)
-   - Namespace: `external-secrets`
-   - Service Account: `external-secrets-sa` (with IRSA role)
-   - Pods: operator, cert-controller, webhook
-
-2. **ClusterSecretStore** (Kubernetes resource)
-   - Defines connection to AWS Secrets Manager
-   - Uses IRSA for authentication (no access keys needed)
-   - Region: `ap-south-1`
-
-3. **ExternalSecret** (Kubernetes resources - deployed via GitOps)
-   - Define which AWS secret to sync
-   - Map AWS secret keys to Kubernetes secret keys
-   - Auto-refresh every 1 hour (configurable)
-
-4. **IRSA Role** (IAM role for service account)
-   - Attached to `external-secrets-sa` service account
-   - Policy allows `secretsmanager:GetSecretValue` for `staging/backend/*`
-   - Least-privilege access (scoped to specific secret paths)
-
-**Setup Script:** `create-secrets.sh`
-- Creates AWS Secrets Manager secrets with auto-generated passwords
-- Outputs secrets ARNs and credential values
-
-**Validation Script:** `post-terraform-validation.sh`
-- Checks External Secrets Operator health
-- Verifies ClusterSecretStore is Ready
-- Validates ExternalSecrets are syncing
-- Auto-fixes common issues (kubeconfig, StorageClass, pod restarts)
-
----
-
-### Variables
-
-| Variable | Type | Required | Default | Example | Description |
-|----------|------|----------|---------|---------|-------------|
-| `common_tags` | object | ✅ | - | `{ owner = "akthm", ... }` | Tags applied to all AWS resources |
-| `region` | string | ✅ | - | `ap-south-1` | AWS region for deployment |
-| `vpc_cidrs` | string | ✅ | - | `10.0.0.0/16` | VPC CIDR block |
-| `ha` | number | ✅ | - | `2` | Number of Availability Zones (1-3) |
-| `cluster_version` | string | ✅ | - | `1.34` | Kubernetes version |
-| `node_type` | string | ✅ | - | `t3a.large` | EC2 instance type for worker nodes |
-| `argocd_repo_url` | string | ✅ | - | `https://github.com/org/gitops` | Git repository URL for ArgoCD |
-| `argocd_repo_path` | string | ❌ | `apps` | `apps/staging` | Path within repo to application manifests |
-| `argocd_target_revision` | string | ❌ | `main` | `main` | Git branch/tag to sync from |
-| `argocd_version` | string | ❌ | `6.0.0` | `6.0.0` | ArgoCD Helm chart version |
-| `git_token` | string | ✅ | - | `ghp_xxxx...` | GitHub/GitLab Personal Access Token (sensitive) |
-
----
 
 ## 📁 Project Structure
 
 ```
 terraform/
-├── main.tf                      # Root orchestration (calls modules)
-├── variables.tf                 # Input variable definitions (11 variables)
-├── providers.tf                 # AWS, Kubernetes, Helm providers
-├── terraform.tfvars             # Variable values (environment-specific)
+├── live/                           # Environment configurations
+│   ├── oci-staging/               # OCI production/staging environment
+│   │   ├── network/               # VCN, subnets, gateways
+│   │   ├── cluster/               # OKE control plane
+│   │   ├── nodepool/              # Worker nodes
+│   │   ├── bastion/               # Bastion service
+│   │   ├── vault/                 # OCI Vault + secrets
+│   │   ├── atp/                   # Autonomous Database
+│   │   ├── wallet-bucket/         # ATP wallet storage
+│   │   ├── edge-proxy/            # NGINX ingress VM
+│   │   ├── load-balancer/         # Network LB
+│   │   └── cluster-services/      # ArgoCD, ESO, cert-manager
+│   └── local-dev/                 # Local Kind cluster for development
 │
-├── modules/
-│   ├── eks/                     # EKS Cluster Module
-│   │   ├── MAIN.tf              # EKS cluster, addons, External Secrets
-│   │   ├── variables.tf         # Module inputs
-│   │   ├── outputs.tf           # Cluster details exported
-│   │   └── modules/
-│   │       ├── network/         # VPC, subnets, IGW, NAT
-│   │       │   ├── main.tf
-│   │       │   ├── outputs.tf
-│   │       │   └── variables.tf
-│   │       └── ebs-csi-storageclass/  # Default storage class
-│   │           ├── main.tf
-│   │           ├── outputs.tf
-│   │           ├── provider.tf
-│   │           └── variables.tf
-│   │
-│   └── cluster_services/        # Bootstrap Services
-│       ├── Main.tf              # NGINX Ingress + ArgoCD
-│       ├── variables.tf         # Module inputs (9 variables)
-│       ├── outputs.tf           # Access commands and URLs
-│       └── Provider.tf          # Kubernetes/Helm providers
+├── modules/                        # Reusable Terraform modules
+│   ├── oci-network/               # VCN and networking
+│   ├── oke-cluster/               # OKE control plane
+│   ├── oke-nodepool/              # Worker node pools
+│   ├── oci-vault/                 # Vault and secrets
+│   ├── oci-atp/                   # Autonomous Database
+│   ├── oci-bastion/               # Bastion service
+│   ├── oci-edge-proxy/            # Edge proxy VM
+│   ├── oci-network-lb/            # Network load balancer
+│   └── cluster_services/          # Helm deployments
 │
-├── create-secrets.sh            # AWS Secrets Manager initialization
-└── post-terraform-validation.sh # Automated validation script
+├── scripts/                        # Operational scripts
+│   └── oci-bastion-kube-tunnel.sh # Bastion tunnel for kubectl
+│
+├── docs/                           # Documentation
+│   ├── DISASTER_RECOVERY.md       # DR procedures and RTO/RPO
+│   ├── SLI_SLO_SLA.md             # Service level definitions
+│   ├── PRODUCTION_RUNBOOK.md      # Operational procedures
+│   └── *.md                       # Component guides
+│
+└── archive/                        # Archived/reference configurations
 ```
 
----
+## 🚀 Quick Start
 
-## 🔐 Secrets Management
+### Prerequisites
 
-### AWS Secrets Manager
+1. **OCI CLI configured**:
+   ```bash
+   oci setup config
+   oci iam region list  # Verify authentication
+   ```
 
-All sensitive application credentials are stored in AWS Secrets Manager and synced to Kubernetes via External Secrets Operator.
+2. **Tools installed**:
+   ```bash
+   terraform version   # >= v1.14.3
+   terragrunt version  # >= v0.96.1
+   kubectl version --client # Client Version: v1.31.0
+                            # Kustomize Version: v5.4.2
+   ```
 
-**Created Secrets:**
-1. **`staging/backend/database`** - MySQL credentials
-2. **`staging/backend/flask-app`** - Flask SECRET_KEY, API keys
-3. **`staging/backend/admin`** - Admin user credentials
-4. **`staging/backend/jwt-keys`** - RSA keys for JWT signing
+3. **Environment variables** (see `live/oci-staging/env.hcl`):
+   ```bash
+   export TF_VAR_compartment_id="ocid1.compartment.oc1..xxx"
+   export TF_VAR_tenancy_id="ocid1.tenancy.oc1..xxx"
+   ```
 
-**Setup:**
+### Deployment
+
 ```bash
-# Create all secrets with auto-generated passwords
-./create-secrets.sh
+# 1. Deploy network layer
+cd live/oci-staging/network
+terragrunt apply
 
-# View created secrets
-aws secretsmanager list-secrets --region ap-south-1 \
-  --filters Key=name,Values=staging/backend
+# 2. Deploy OKE cluster
+cd ../cluster
+terragrunt apply
+
+# 3. Deploy node pool
+cd ../nodepool
+terragrunt apply
+
+# 4. Deploy supporting services (vault, bastion, ATP)
+cd ../vault && terragrunt apply
+cd ../bastion && terragrunt apply
+cd ../atp && terragrunt apply
+
+# 5. Deploy cluster services (ArgoCD, ESO)
+cd ../cluster-services
+terragrunt apply
 ```
 
----
-
-## 🔍 Verification
-
-### Check All Services Running
+### Access Kubernetes API
 
 ```bash
-# EKS cluster nodes
+# Via bastion tunnel (private endpoint)
+export BASTION_OCID="ocid1.bastion.oc1..."
+export K8S_PRIVATE_ENDPOINT="10.0.20.x"
+./scripts/oci-bastion-kube-tunnel.sh
+
+# Use generated kubeconfig
+export KUBECONFIG=./kubeconfig.bastion
 kubectl get nodes
-
-# External Secrets Operator
-kubectl get pods -n external-secrets
-
-# NGINX Ingress Controller
-kubectl get pods -n ingress-nginx
-
-# ArgoCD
-kubectl get pods -n argocd
-
-# All applications managed by ArgoCD
-kubectl get applications -n argocd
 ```
 
-### Run Validation Script
+## 📊 Component Dependencies
 
-```bash
-./post-terraform-validation.sh
-
-# Auto-validates and fixes:
-# - Kubernetes connectivity
-# - External Secrets Operator health
-# - ClusterSecretStore Ready status
-# - AWS Secrets Manager secrets exist
-# - ExternalSecrets syncing properly
-# - StorageClass availability
-# - Pod health and readiness
+```
+network
+   │
+   ├──► cluster ──► nodepool ──► vault ──► cluster-services
+   │                   │           │              │
+   │                   └───────────┼──────────────┘
+   │                               │
+   ├──► bastion                    │
+   │                               │
+   ├──► edge-proxy                 │
+   │                               │
+   ├──► load-balancer              │
+   │                               │
+   └──► atp ◄──────────────────────┘
 ```
 
----
+## 💰 Production Tier Resources
 
-## 🐛 Troubleshooting
+| Resource | Configuration | Monthly Cost (Est.) |
+|----------|--------------|---------------------|
+| OKE Control Plane | Enhanced Cluster | ~$0 (included) |
+| Worker Nodes | 3x E4.Flex (4 OCPU, 32GB) | ~$180 |
+| NAT Gateway | Always-on | ~$33 |
+| Network LB | 100 Mbps | ~$20 |
+| ATP Database | 2 OCPU, 1TB, Data Guard | ~$800 |
+| OCI Vault | Virtual Private | ~$50 |
+| Bastion | Session-based | ~$0 |
+| Object Storage | 100GB | ~$2 |
+| **Total** | | **~$1,085/month** |
 
-### Issue: `terraform plan` shows errors for kubernetes_manifest
+## 📚 Documentation
 
-**Cause:** Terraform validates manifests during plan, but cluster doesn't exist yet.
+| Document | Description |
+|----------|-------------|
+| [DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md) | DR procedures, RTO/RPO targets, recovery runbooks |
+| [SLI_SLO_SLA.md](docs/SLI_SLO_SLA.md) | Service level indicators, objectives, and agreements |
+| [PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md) | Day-2 operations, incident response, maintenance |
+| [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Step-by-step deployment instructions |
+| [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) | Technical implementation details |
+| [BASTION_TUNNEL_GUIDE.md](docs/BASTION_TUNNEL_GUIDE.md) | Bastion tunnel setup and usage |
 
-**Solution:** This is expected behavior. Use two-phase deployment:
-```bash
-terraform apply -target=module.eks    # Phase 1
-terraform apply                       # Phase 2
-```
+## 🔐 Security Features
 
----
+- **Private Kubernetes API**: Accessible only via Bastion tunnel
+- **Instance Principal Authentication**: No credentials stored in cluster
+- **TLS Everywhere**: ATP, K8s API, ingress all use TLS
+- **Network Segmentation**: Public/private subnet isolation
+- **Security Lists**: Restrictive ingress/egress rules
+- **OCI Vault**: Centralized secrets with automatic rotation capability
 
-### Issue: ArgoCD UI not accessible
+## 📈 Monitoring
 
-**Checks:**
-1. LoadBalancer provisioning takes 2-5 minutes:
-   ```bash
-   kubectl -n ingress-nginx get svc ingress-nginx-controller -w
-   ```
+Monitoring is deployed separately via ArgoCD from the application repository. See [PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md) for integration details.
 
-2. Verify ArgoCD pods are running:
-   ```bash
-   kubectl get pods -n argocd
-   ```
+**Stack Components** (deployed via ArgoCD):
+- Prometheus (metrics collection)
+- Grafana (dashboards and visualization)
+- Alertmanager (alerting and notification)
+- Loki (log aggregation)
 
-**Solution:** Wait for LoadBalancer to provision, then access via:
-```
-http://<EXTERNAL-IP>/argo
-```
+## 🏷️ Related Documentation
 
----
+- [OCI OKE Documentation](https://docs.oracle.com/en-us/iaas/Content/ContEng/home.htm)
+- [Terraform OCI Provider](https://registry.terraform.io/providers/oracle/oci/latest/docs)
+- [Terragrunt Documentation](https://terragrunt.gruntwork.io/docs/)
 
-### Issue: External Secrets not syncing
+## 📄 License
 
-**Checks:**
-1. Verify ClusterSecretStore is Ready:
-   ```bash
-   kubectl get clustersecretstore aws-secrets-manager
-   ```
-
-2. Check External Secrets Operator logs:
-   ```bash
-   kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets
-   ```
-
-**Common Fixes:**
-- Ensure secret path in AWS matches `remoteRef.key` in ExternalSecret
-- Verify IRSA role has `secretsmanager:GetSecretValue` permission
-
----
-
-### Issue: kubectl commands fail
-
-**Cause:** kubeconfig not configured or expired.
-
-**Solution:**
-```bash
-# Reconfigure kubeconfig
-eval $(terraform output -raw kubeconfig_command)
-
-# Verify
-kubectl cluster-info
-```
-
----
-
-## 🧹 Cleanup
-
-### Destroy All Infrastructure
-
-```bash
-# Destroy all resources (warning: irreversible!)
-terraform destroy -var-file="terraform.tfvars"
-
-# Confirm by typing: yes
-```
-
-**Order of Deletion:**
-1. ArgoCD and NGINX Ingress (Helm releases)
-2. Kubernetes manifests
-3. EKS addons
-4. Worker node groups
-5. EKS cluster
-6. NAT Gateways, Internet Gateway
-7. VPC and subnets
-
----
-
-## 🎯 Best Practices Implemented
-
-1. **Infrastructure as Code** - All resources defined declaratively in Terraform
-2. **GitOps-First** - Terraform provisions minimal bootstrap, ArgoCD manages apps
-3. **Security** - IRSA for pod-level IAM permissions, encrypted EBS volumes
-4. **High Availability** - Multi-AZ deployment, ArgoCD with 2 replicas
-5. **Cost Optimization** - Smaller instance types by default, auto-scaling node groups
-6. **Observability** - All pods emit logs, ArgoCD UI for deployment visibility
-
----
-
-## 📚 Additional Resources
-
-- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
-- [AWS EKS User Guide](https://docs.aws.amazon.com/eks/latest/userguide/)
-- [ArgoCD Documentation](https://argo-cd.readthedocs.io/)
-- [NGINX Ingress Controller](https://kubernetes.github.io/ingress-nginx/)
-- [External Secrets Operator](https://external-secrets.io/)
-
----
-
-**Last Updated:** November 23, 2025
-
+See [LICENSE](LICENSE) for details.

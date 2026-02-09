@@ -17,3 +17,8 @@ output "cluster_certificate_authority_data" {
   description = "The CA data for the cluster (placeholder for local KIND)"
   value       = "local-kind-ca"
 }
+
+output "kubeconfig_path" {
+  description = "Path to the kubeconfig file for the KIND cluster"
+  value       = pathexpand("~/.kube/config")
+}
